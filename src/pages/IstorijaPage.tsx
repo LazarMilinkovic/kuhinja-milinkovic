@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useHistory, deleteHistoryEntry } from '@/hooks/useHistory'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { formatWeekLabel, formatDayDate } from '@/lib/dateUtils'
-import { DAY_NAMES, DAY_NAMES_SHORT } from '@/types'
+import { DAY_NAMES } from '@/types'
 import type { DayIndex } from '@/types'
 import { useToast } from '@/components/ui/Toast'
 

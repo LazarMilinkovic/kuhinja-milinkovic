@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
-import type { HistoryEntry, HistoryDaySummary, DayIndex } from '@/types'
+import type { HistoryEntry, HistoryDaySummary } from '@/types'
 
 function toHistory(row: Record<string, unknown>): HistoryEntry {
   return {
