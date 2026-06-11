@@ -6,9 +6,12 @@ export function useShoppingList(plan: WeeklyPlan | undefined, meals: Meal[]): Sh
   return useMemo(() => {
     if (!plan) return []
     const items: ShoppingItem[] = []
-    for (const slot of plan.slots) {
-      if (!slot.mealId || slot.isCatering) continue
-      const meal = meals.find((m) => m.id === slot.mealId)
+    const seenMealIds = new Set<string>()
+    for (const day of plan.days) {
+      if (!day.mealId || day.isCatering) continue
+      if (seenMealIds.has(day.mealId)) continue  // isti obrok za oba dana → jednom u listi
+      seenMealIds.add(day.mealId)
+      const meal = meals.find((m) => m.id === day.mealId)
       if (!meal) continue
       for (const ing of meal.ingredients) {
         items.push({

@@ -4,20 +4,21 @@ import { useMeals } from '@/hooks/useMeals'
 import {
   useCurrentPlan,
   generateNewPlan,
-  regenerateSlot,
-  setSlotCatering,
-  setSlotMeal,
+  regeneratePair,
+  setDayCatering,
+  setDayMeal,
+  clearDay,
   ensureCurrentWeekPlan,
 } from '@/hooks/useWeeklyPlan'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { WeekSlotCard } from '@/components/planer/WeekSlotCard'
+import { PairCard } from '@/components/planer/WeekSlotCard'
 import { PickMealModal } from '@/components/planer/PickMealModal'
 import { Button } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { formatWeekLabel } from '@/lib/dateUtils'
 import { getSeason } from '@/lib/seasonUtils'
 import { SEASON_ICONS, SEASON_LABELS } from '@/types'
-import type { SlotIndex } from '@/types'
+import type { DayIndex } from '@/types'
 
 export function PlanerPage() {
   const plan = useCurrentPlan()
@@ -25,9 +26,9 @@ export function PlanerPage() {
   const { toast } = useToast()
 
   const [generating, setGenerating] = useState(false)
-  const [regeneratingSlot, setRegeneratingSlot] = useState<SlotIndex | null>(null)
+  const [regeneratingPair, setRegeneratingPair] = useState<number | null>(null)
   const [confirmGenerate, setConfirmGenerate] = useState(false)
-  const [pickSlot, setPickSlot] = useState<SlotIndex | null>(null)
+  const [pickDay, setPickDay] = useState<DayIndex | null>(null)
 
   const season = getSeason()
 
@@ -36,7 +37,7 @@ export function PlanerPage() {
   }, [])
 
   async function handleGenerateNew() {
-    if (plan && plan.slots.some((s) => s.mealId || s.isCatering)) {
+    if (plan && plan.days.some((d) => d.mealId || d.isCatering)) {
       setConfirmGenerate(true)
       return
     }
@@ -56,29 +57,35 @@ export function PlanerPage() {
     }
   }
 
-  async function handleRegenerate(slotIndex: SlotIndex) {
+  async function handleRegenerate(pairIndex: number) {
     if (!plan) return
-    setRegeneratingSlot(slotIndex)
+    setRegeneratingPair(pairIndex)
     try {
-      await regenerateSlot(plan, slotIndex)
-      toast('Slot regenerisan')
+      await regeneratePair(plan, pairIndex)
+      toast('Par regenerisan')
     } catch {
       toast('Greška pri regenerisanju', 'error')
     } finally {
-      setRegeneratingSlot(null)
+      setRegeneratingPair(null)
     }
   }
 
-  async function handleSetCatering(slotIndex: SlotIndex, value: boolean, note = '') {
+  async function handleSetCatering(dayIndex: DayIndex, value: boolean, note = '') {
     if (!plan) return
-    await setSlotCatering(plan, slotIndex, value, note)
+    await setDayCatering(plan, dayIndex, value, note)
     toast(value ? 'Ketering označen' : 'Ketering uklonjen')
   }
 
-  async function handlePickMeal(slotIndex: SlotIndex, mealId: string) {
+  async function handlePickMeal(dayIndex: DayIndex, mealId: string) {
     if (!plan) return
-    await setSlotMeal(plan, slotIndex, mealId)
+    await setDayMeal(plan, dayIndex, mealId)
     toast('Jelo odabrano')
+  }
+
+  async function handleClearMeal(dayIndex: DayIndex) {
+    if (!plan) return
+    await clearDay(plan, dayIndex)
+    toast('Obrok uklonjen')
   }
 
   const weekLabel = plan ? formatWeekLabel(plan.weekStart) : ''
@@ -97,16 +104,17 @@ export function PlanerPage() {
       />
 
       <div className="px-4 py-4 flex flex-col gap-3">
-        {plan?.slots.map((slot) => (
-          <WeekSlotCard
-            key={slot.slotIndex}
-            slot={slot}
+        {plan && [0, 1, 2].map((pairIndex) => (
+          <PairCard
+            key={pairIndex}
+            pairIndex={pairIndex as 0 | 1 | 2}
             plan={plan}
-            meal={meals.find((m) => m.id === slot.mealId)}
+            meals={meals}
             onRegenerate={handleRegenerate}
+            onPickMeal={setPickDay}
+            onClearMeal={handleClearMeal}
             onSetCatering={handleSetCatering}
-            onPickMeal={setPickSlot}
-            regenerating={regeneratingSlot === slot.slotIndex}
+            regenerating={regeneratingPair === pairIndex}
           />
         ))}
       </div>
@@ -124,7 +132,7 @@ export function PlanerPage() {
         </Button>
       </div>
 
-      {/* Confirm overwrite dialog */}
+      {/* Potvrda brisanja plana */}
       {confirmGenerate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-espresso/40 backdrop-blur-sm" onClick={() => setConfirmGenerate(false)} />
@@ -146,10 +154,10 @@ export function PlanerPage() {
       )}
 
       <PickMealModal
-        open={pickSlot !== null}
-        onClose={() => setPickSlot(null)}
+        open={pickDay !== null}
+        onClose={() => setPickDay(null)}
         meals={meals}
-        slotIndex={pickSlot}
+        dayIndex={pickDay}
         onSelect={handlePickMeal}
       />
     </div>

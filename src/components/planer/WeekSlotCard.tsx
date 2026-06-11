@@ -1,139 +1,204 @@
 import { useState } from 'react'
 import { RefreshCw, Truck, Utensils, ChevronDown, X } from 'lucide-react'
-import type { DaySlot, WeeklyPlan, SlotIndex } from '@/types'
-import { SLOT_LABELS } from '@/types'
+import type { DayEntry, WeeklyPlan, DayIndex, Meal } from '@/types'
+import { DAY_NAMES, DAY_NAMES_SHORT, DAY_PAIRS, PAIR_LABELS } from '@/types'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { formatSlotDates } from '@/lib/dateUtils'
-import type { Meal } from '@/types'
+import { formatDayDate, formatPairDates } from '@/lib/dateUtils'
 
-interface Props {
-  slot: DaySlot
-  plan: WeeklyPlan
+interface DayRowProps {
+  dayEntry: DayEntry
   meal: Meal | undefined
-  onRegenerate: (slotIndex: SlotIndex) => void
-  onSetCatering: (slotIndex: SlotIndex, value: boolean, note?: string) => void
-  onPickMeal: (slotIndex: SlotIndex) => void
-  regenerating: boolean
+  weekStart: number
+  onPickMeal: (dayIndex: DayIndex) => void
+  onClearMeal: (dayIndex: DayIndex) => void
+  onSetCatering: (dayIndex: DayIndex, value: boolean, note?: string) => void
 }
 
-export function WeekSlotCard({ slot, plan, meal, onRegenerate, onSetCatering, onPickMeal, regenerating }: Props) {
+function DayRow({ dayEntry, meal, weekStart, onPickMeal, onClearMeal, onSetCatering }: DayRowProps) {
   const [showCateringInput, setShowCateringInput] = useState(false)
-  const [cateringNote, setCateringNote] = useState(slot.cateringNote)
+  const [cateringNote, setCateringNote] = useState(dayEntry.cateringNote)
 
-  const label = SLOT_LABELS[slot.slotIndex]
-  const dates = formatSlotDates(plan.weekStart, slot.slotIndex)
+  const dayShort = DAY_NAMES_SHORT[dayEntry.dayIndex]
+  const dayFull = DAY_NAMES[dayEntry.dayIndex]
+  const date = formatDayDate(weekStart, dayEntry.dayIndex)
 
   function handleCateringSubmit() {
-    onSetCatering(slot.slotIndex, true, cateringNote)
+    onSetCatering(dayEntry.dayIndex, true, cateringNote)
     setShowCateringInput(false)
   }
 
   return (
-    <Card className="overflow-hidden">
-      {/* Slot header */}
-      <div className="px-4 pt-4 pb-3 border-b border-espresso/6">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-primary uppercase tracking-wider">{label}</p>
-            <p className="text-xs text-espresso-muted mt-0.5">{dates}</p>
-          </div>
-          {slot.isCatering && (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">
-              <Truck size={12} />
-              Ketering
-            </span>
-          )}
+    <div className="px-4 py-3 border-t border-espresso/6">
+      <div className="flex items-start gap-3">
+        {/* Dan */}
+        <div className="flex-shrink-0 w-14 pt-0.5">
+          <p className="text-xs font-bold text-primary uppercase tracking-wide">{dayShort}</p>
+          <p className="text-xs text-espresso-muted">{date}</p>
         </div>
-      </div>
 
-      {/* Slot body */}
-      <div className="px-4 py-4">
-        {slot.isCatering ? (
-          <div>
-            <p className="text-sm text-espresso-muted">
-              {slot.cateringNote || 'Dostava / ketering'}
-            </p>
-            <button
-              onClick={() => onSetCatering(slot.slotIndex, false)}
-              className="mt-2 text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
-            >
-              <X size={12} /> Ukloni ketering
-            </button>
-          </div>
-        ) : meal ? (
-          <div>
-            <h3 className="font-serif text-xl font-semibold text-espresso mb-2">{meal.name}</h3>
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              <Badge variant="category" category={meal.category} />
-              <Badge variant="duration" duration={meal.duration} />
-              {meal.seasons.map((s) => (
-                <Badge key={s} variant="season" season={s} />
-              ))}
+        {/* Sadržaj */}
+        <div className="flex-1 min-w-0">
+          {dayEntry.isCatering ? (
+            <div>
+              <p className="text-sm font-medium text-espresso">Ketering</p>
+              {dayEntry.cateringNote && (
+                <p className="text-xs text-espresso-muted mt-0.5">{dayEntry.cateringNote}</p>
+              )}
+              <button
+                onClick={() => onSetCatering(dayEntry.dayIndex, false)}
+                className="mt-1.5 text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
+              >
+                <X size={11} /> Ukloni ketering
+              </button>
             </div>
-            {meal.ingredients.length > 0 && (
-              <p className="text-xs text-espresso-muted">
-                {meal.ingredients.length} namirnic{meal.ingredients.length === 1 ? 'a' : 'e'}
-              </p>
-            )}
-          </div>
-        ) : (
-          <div className="text-center py-4">
-            <p className="text-espresso-muted text-sm mb-3">Nema planiranog obroka</p>
-            <Button variant="secondary" size="sm" onClick={() => onPickMeal(slot.slotIndex)}>
-              <Utensils size={14} />
-              Odaberi jelo
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* Actions */}
-      {!slot.isCatering && (
-        <div className="px-4 pb-4 flex flex-wrap gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => onRegenerate(slot.slotIndex)}
-            loading={regenerating}
-          >
-            <RefreshCw size={14} />
-            Regeneriši
-          </Button>
-          {!showCateringInput ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowCateringInput(true)}
-            >
-              <Truck size={14} />
-              Ketering
-            </Button>
+          ) : meal ? (
+            <div>
+              <p className="text-sm font-semibold text-espresso leading-snug">{meal.name}</p>
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                <Badge variant="category" category={meal.category} />
+                <Badge variant="duration" duration={meal.duration} />
+              </div>
+            </div>
           ) : (
-            <div className="flex-1 flex gap-2 items-center w-full mt-1">
-              <input
-                autoFocus
-                value={cateringNote}
-                onChange={(e) => setCateringNote(e.target.value)}
-                placeholder="Napomena (opciono)"
-                className="flex-1 text-sm border border-espresso/20 rounded-xl px-3 py-1.5 outline-none focus:ring-2 focus:ring-primary/30 bg-bg"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleCateringSubmit()
-                  if (e.key === 'Escape') setShowCateringInput(false)
-                }}
-              />
-              <Button variant="primary" size="sm" onClick={handleCateringSubmit}>
-                <ChevronDown size={14} />
-                OK
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setShowCateringInput(false)}>
-                <X size={14} />
+            <div>
+              <p className="text-xs text-espresso-muted mb-2">Nema obroka</p>
+              <div className="flex flex-wrap gap-1.5">
+                <Button size="sm" variant="secondary" onClick={() => onPickMeal(dayEntry.dayIndex)}>
+                  <Utensils size={13} />
+                  Odaberi jelo
+                </Button>
+                {!showCateringInput && (
+                  <Button size="sm" variant="ghost" onClick={() => setShowCateringInput(true)}>
+                    <Truck size={13} />
+                    Ketering
+                  </Button>
+                )}
+              </div>
+              {showCateringInput && (
+                <div className="flex gap-2 items-center mt-2">
+                  <input
+                    autoFocus
+                    value={cateringNote}
+                    onChange={(e) => setCateringNote(e.target.value)}
+                    placeholder={`Napomena za ${dayFull.toLowerCase()}...`}
+                    className="flex-1 text-sm border border-espresso/20 rounded-xl px-3 py-1.5 outline-none focus:ring-2 focus:ring-primary/30 bg-bg"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleCateringSubmit()
+                      if (e.key === 'Escape') setShowCateringInput(false)
+                    }}
+                  />
+                  <Button variant="primary" size="sm" onClick={handleCateringSubmit}>
+                    <ChevronDown size={14} /> OK
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setShowCateringInput(false)}>
+                    <X size={14} />
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Akcije kada je jelo postavljeno */}
+          {(meal || dayEntry.isCatering) && !showCateringInput && (
+            <div className="flex gap-1.5 mt-2">
+              {!dayEntry.isCatering && (
+                <Button size="sm" variant="ghost" onClick={() => onPickMeal(dayEntry.dayIndex)}>
+                  <Utensils size={13} />
+                  Promeni
+                </Button>
+              )}
+              {!dayEntry.isCatering && !meal && null}
+              {meal && !dayEntry.isCatering && (
+                <Button size="sm" variant="ghost" onClick={() => setShowCateringInput(true)}>
+                  <Truck size={13} />
+                  Ketering
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onClearMeal(dayEntry.dayIndex)}
+                className="text-red-500 hover:text-red-700 hover:bg-red-50"
+              >
+                <X size={13} />
+                Obriši
               </Button>
             </div>
           )}
         </div>
-      )}
+      </div>
+    </div>
+  )
+}
+
+interface PairCardProps {
+  pairIndex: 0 | 1 | 2
+  plan: WeeklyPlan
+  meals: Meal[]
+  onRegenerate: (pairIndex: number) => void
+  onPickMeal: (dayIndex: DayIndex) => void
+  onClearMeal: (dayIndex: DayIndex) => void
+  onSetCatering: (dayIndex: DayIndex, value: boolean, note?: string) => void
+  regenerating: boolean
+}
+
+export function PairCard({
+  pairIndex,
+  plan,
+  meals,
+  onRegenerate,
+  onPickMeal,
+  onClearMeal,
+  onSetCatering,
+  regenerating,
+}: PairCardProps) {
+  const [dayA, dayB] = DAY_PAIRS[pairIndex]
+  const dayAEntry = plan.days.find((d) => d.dayIndex === dayA)!
+  const dayBEntry = plan.days.find((d) => d.dayIndex === dayB)!
+
+  const label = PAIR_LABELS[pairIndex]
+  const dates = formatPairDates(plan.weekStart, pairIndex)
+
+  return (
+    <Card className="overflow-hidden">
+      {/* Header para */}
+      <div className="px-4 pt-4 pb-3 border-b border-espresso/6 flex items-center justify-between">
+        <div>
+          <p className="text-xs font-semibold text-primary uppercase tracking-wider">{label}</p>
+          <p className="text-xs text-espresso-muted mt-0.5">{dates}</p>
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => onRegenerate(pairIndex)}
+          loading={regenerating}
+        >
+          <RefreshCw size={13} />
+          Regeneriši
+        </Button>
+      </div>
+
+      {/* Pon/Sre/Pet */}
+      <DayRow
+        dayEntry={dayAEntry}
+        meal={meals.find((m) => m.id === dayAEntry.mealId)}
+        weekStart={plan.weekStart}
+        onPickMeal={onPickMeal}
+        onClearMeal={onClearMeal}
+        onSetCatering={onSetCatering}
+      />
+
+      {/* Uto/Čet/Sub */}
+      <DayRow
+        dayEntry={dayBEntry}
+        meal={meals.find((m) => m.id === dayBEntry.mealId)}
+        weekStart={plan.weekStart}
+        onPickMeal={onPickMeal}
+        onClearMeal={onClearMeal}
+        onSetCatering={onSetCatering}
+      />
     </Card>
   )
 }

@@ -1,4 +1,5 @@
-import type { Meal, WeeklyPlan, HistoryEntry, DaySlot, SlotIndex } from '@/types'
+import type { Meal, WeeklyPlan, HistoryEntry, DayEntry, DayIndex } from '@/types'
+import { DAY_PAIRS } from '@/types'
 import { getSeason, isMealAvailable } from './seasonUtils'
 import { getWeekStart } from './dateUtils'
 import { newId } from './idUtils'
@@ -16,8 +17,8 @@ function getMealIdsFromLastNWeeks(history: HistoryEntry[], n: number): Set<strin
   const recent = [...history].sort((a, b) => b.weekStart - a.weekStart).slice(0, n)
   const ids = new Set<string>()
   for (const week of recent) {
-    for (const slot of week.slotSummaries) {
-      if (slot.mealId) ids.add(slot.mealId)
+    for (const day of week.daySummaries) {
+      if (day.mealId) ids.add(day.mealId)
     }
   }
   return ids
@@ -28,11 +29,9 @@ function pickMeal(
   usedCategories: Set<string>,
   fallback: Meal[]
 ): Meal | null {
-  // Prefer different category
   const preferred = candidates.filter((m) => !usedCategories.has(m.category))
   const pool = preferred.length > 0 ? preferred : candidates
   if (pool.length > 0) return pool[0]
-  // Ultimate fallback — pick from all 2-day meals regardless of recency
   const fallbackPool = fallback.filter((m) => !usedCategories.has(m.category))
   return fallbackPool.length > 0 ? fallbackPool[0] : fallback[0] ?? null
 }
@@ -40,23 +39,22 @@ function pickMeal(
 export interface GenerateOptions {
   meals: Meal[]
   history: HistoryEntry[]
-  slotsToRegenerate: SlotIndex[]
+  // Koji parovi se regenerišu: 0=Pon-Uto, 1=Sre-Čet, 2=Pet-Sub
+  pairsToRegenerate: number[]
   existingPlan?: WeeklyPlan
 }
 
 export function generateWeeklyPlan(options: GenerateOptions): WeeklyPlan {
-  const { meals, history, slotsToRegenerate, existingPlan } = options
+  const { meals, history, pairsToRegenerate, existingPlan } = options
 
   const season = getSeason()
   const recentIds = getMealIdsFromLastNWeeks(history, 2)
 
-  // Pool for 2-day meals: season-available, not used recently
   const candidates = shuffle(
     meals.filter(
       (m) => m.duration === 2 && isMealAvailable(m, season) && !recentIds.has(m.id)
     )
   )
-  // Fallback pool: all 2-day seasonal meals (ignore recency)
   const fallbackPool = shuffle(
     meals.filter((m) => m.duration === 2 && isMealAvailable(m, season))
   )
@@ -64,56 +62,57 @@ export function generateWeeklyPlan(options: GenerateOptions): WeeklyPlan {
   const usedCategories = new Set<string>()
   const pickedMealIds = new Set<string>()
 
-  // Pre-populate usedCategories/pickedMealIds from slots NOT being regenerated
+  // Uzmi u obzir parove koji se NE regenerišu
   if (existingPlan) {
-    for (const slot of existingPlan.slots) {
-      if (!slotsToRegenerate.includes(slot.slotIndex) && slot.mealId) {
-        usedCategories.add(
-          meals.find((m) => m.id === slot.mealId)?.category ?? ''
-        )
-        pickedMealIds.add(slot.mealId)
+    for (let pairIdx = 0; pairIdx < 3; pairIdx++) {
+      if (pairsToRegenerate.includes(pairIdx)) continue
+      const [dayA] = DAY_PAIRS[pairIdx]
+      const existing = existingPlan.days.find((d) => d.dayIndex === dayA)
+      if (existing?.mealId) {
+        const meal = meals.find((m) => m.id === existing.mealId)
+        if (meal) {
+          usedCategories.add(meal.category)
+          pickedMealIds.add(existing.mealId)
+        }
       }
     }
   }
 
-  const newSlots: DaySlot[] = [0, 1, 2].map((i) => {
-    const idx = i as SlotIndex
-
-    // Preserve slot if not in regeneration list
-    if (existingPlan && !slotsToRegenerate.includes(idx)) {
-      return existingPlan.slots[idx]
+  // Kreiranje 6 dana — kopiraj postojeće ili prazni
+  const newDays: DayEntry[] = Array.from({ length: 6 }, (_, i) => {
+    const dayIndex = i as DayIndex
+    if (existingPlan) {
+      const existing = existingPlan.days.find((d) => d.dayIndex === dayIndex)
+      if (existing) return { ...existing }
     }
+    return { dayIndex, mealId: null, isCatering: false, cateringNote: '' }
+  })
 
-    const available = candidates.filter(
-      (m) => !pickedMealIds.has(m.id)
-    )
+  // Regeneriši tražene parove
+  for (let pairIdx = 0; pairIdx < 3; pairIdx++) {
+    if (!pairsToRegenerate.includes(pairIdx)) continue
+
+    const [dayA, dayB] = DAY_PAIRS[pairIdx]
+
+    const available = candidates.filter((m) => !pickedMealIds.has(m.id))
     const fallback = fallbackPool.filter((m) => !pickedMealIds.has(m.id))
-
     const picked = pickMeal(available, usedCategories, fallback)
 
     if (picked) {
       usedCategories.add(picked.category)
       pickedMealIds.add(picked.id)
-      return {
-        slotIndex: idx,
-        mealId: picked.id,
-        isCatering: false,
-        cateringNote: '',
-      }
+      newDays[dayA] = { dayIndex: dayA, mealId: picked.id, isCatering: false, cateringNote: '' }
+      newDays[dayB] = { dayIndex: dayB, mealId: picked.id, isCatering: false, cateringNote: '' }
+    } else {
+      newDays[dayA] = { dayIndex: dayA, mealId: null, isCatering: false, cateringNote: '' }
+      newDays[dayB] = { dayIndex: dayB, mealId: null, isCatering: false, cateringNote: '' }
     }
-
-    return {
-      slotIndex: idx,
-      mealId: null,
-      isCatering: false,
-      cateringNote: '',
-    }
-  })
+  }
 
   return {
     id: existingPlan?.id ?? newId(),
     weekStart: getWeekStart(),
-    slots: newSlots as [DaySlot, DaySlot, DaySlot],
+    days: newDays,
     generatedAt: Date.now(),
     isCurrentWeek: true,
     notes: existingPlan?.notes ?? '',

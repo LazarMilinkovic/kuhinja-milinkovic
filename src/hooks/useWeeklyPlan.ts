@@ -1,129 +1,231 @@
-import { useLiveQuery } from 'dexie-react-hooks'
-import { db } from '@/db/database'
-import type { WeeklyPlan, DaySlot, SlotIndex } from '@/types'
+import { useState, useEffect, useCallback } from 'react'
+import { supabase } from '@/lib/supabase'
+import type { WeeklyPlan, DayEntry, DayIndex, HistoryEntry, HistoryDaySummary, Meal, Season, Ingredient, MealCategory, MealDuration } from '@/types'
 import { generateWeeklyPlan } from '@/lib/planGenerator'
 import { getWeekStart } from '@/lib/dateUtils'
 import { newId } from '@/lib/idUtils'
 
-async function getCurrentPlan(): Promise<WeeklyPlan | undefined> {
-  return db.weeklyPlans.filter((p) => p.isCurrentWeek).first()
+// ─── Maperi ──────────────────────────────────────────────────────────────────
+
+function toPlan(row: Record<string, unknown>): WeeklyPlan {
+  return {
+    id: row.id as string,
+    weekStart: row.week_start as number,
+    days: (row.days ?? []) as DayEntry[],
+    generatedAt: row.generated_at as number,
+    isCurrentWeek: row.is_current_week as boolean,
+    notes: (row.notes ?? '') as string,
+  }
 }
+
+function fromPlan(plan: WeeklyPlan) {
+  return {
+    id: plan.id,
+    week_start: plan.weekStart,
+    days: plan.days,
+    generated_at: plan.generatedAt,
+    is_current_week: plan.isCurrentWeek,
+    notes: plan.notes,
+  }
+}
+
+function toMeal(row: Record<string, unknown>): Meal {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    category: row.category as MealCategory,
+    duration: row.duration as MealDuration,
+    seasons: (row.seasons ?? []) as Season[],
+    ingredients: (row.ingredients ?? []) as Ingredient[],
+    notes: (row.notes ?? '') as string,
+    createdAt: row.created_at as number,
+    updatedAt: row.updated_at as number,
+  }
+}
+
+function toHistory(row: Record<string, unknown>): HistoryEntry {
+  return {
+    id: row.id as string,
+    weekStart: row.week_start as number,
+    daySummaries: (row.day_summaries ?? []) as HistoryDaySummary[],
+    createdAt: row.created_at as number,
+  }
+}
+
+// ─── Data fetching ────────────────────────────────────────────────────────────
+
+async function fetchCurrentPlan(): Promise<WeeklyPlan | undefined> {
+  const { data } = await supabase
+    .from('weekly_plans')
+    .select('*')
+    .eq('is_current_week', true)
+    .limit(1)
+    .maybeSingle()
+  return data ? toPlan(data as Record<string, unknown>) : undefined
+}
+
+async function fetchMeals(): Promise<Meal[]> {
+  const { data } = await supabase.from('meals').select('*')
+  return (data ?? []).map((r) => toMeal(r as Record<string, unknown>))
+}
+
+async function fetchRecentHistory(limit = 2): Promise<HistoryEntry[]> {
+  const { data } = await supabase
+    .from('history')
+    .select('*')
+    .order('week_start', { ascending: false })
+    .limit(limit)
+  return (data ?? []).map((r) => toHistory(r as Record<string, unknown>))
+}
+
+// ─── Hook ────────────────────────────────────────────────────────────────────
 
 export function useCurrentPlan(): WeeklyPlan | undefined {
-  return useLiveQuery(() => getCurrentPlan(), [])
-}
+  const [plan, setPlan] = useState<WeeklyPlan | undefined>(undefined)
 
-async function archiveCurrentPlan(plan: WeeklyPlan) {
-  const meals = await db.meals.toArray()
-  await db.history.add({
-    id: plan.id,
-    weekStart: plan.weekStart,
-    createdAt: Date.now(),
-    slotSummaries: plan.slots.map((slot) => {
-      const meal = slot.mealId ? meals.find((m) => m.id === slot.mealId) : null
-      return {
-        slotIndex: slot.slotIndex,
-        mealId: slot.mealId,
-        mealName: meal?.name ?? null,
-        isCatering: slot.isCatering,
-        cateringNote: slot.cateringNote,
-      }
-    }),
-  })
-}
+  const refresh = useCallback(async () => {
+    const p = await fetchCurrentPlan()
+    setPlan(p)
+  }, [])
 
-export async function generateNewPlan() {
-  const [meals, history] = await Promise.all([
-    db.meals.toArray(),
-    db.history.orderBy('weekStart').reverse().limit(2).toArray(),
-  ])
+  useEffect(() => {
+    refresh()
+    const channel = supabase
+      .channel('weekly-plans-rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'weekly_plans' }, refresh)
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [refresh])
 
-  const existing = await getCurrentPlan()
-  if (existing) {
-    await archiveCurrentPlan(existing)
-    await db.weeklyPlans.update(existing.id, { isCurrentWeek: false })
-  }
-
-  const plan = generateWeeklyPlan({
-    meals,
-    history,
-    slotsToRegenerate: [0, 1, 2],
-  })
-
-  await db.weeklyPlans.add(plan)
   return plan
 }
 
-export async function regenerateSlot(plan: WeeklyPlan, slotIndex: SlotIndex) {
-  const [meals, history] = await Promise.all([
-    db.meals.toArray(),
-    db.history.orderBy('weekStart').reverse().limit(2).toArray(),
-  ])
+// ─── Arhiviranje ─────────────────────────────────────────────────────────────
+
+async function archiveCurrentPlan(plan: WeeklyPlan, allMeals: Meal[]) {
+  const seenMealIds = new Set<string>()
+  const daySummaries: HistoryDaySummary[] = plan.days.map((day) => {
+    const meal = day.mealId && !seenMealIds.has(day.mealId)
+      ? allMeals.find((m) => m.id === day.mealId) ?? null
+      : null
+    if (day.mealId) seenMealIds.add(day.mealId)
+    return {
+      dayIndex: day.dayIndex,
+      mealId: day.mealId,
+      mealName: meal?.name ?? (day.mealId ? allMeals.find((m) => m.id === day.mealId)?.name ?? null : null),
+      isCatering: day.isCatering,
+      cateringNote: day.cateringNote,
+    }
+  })
+
+  await supabase.from('history').insert({
+    id: plan.id,
+    week_start: plan.weekStart,
+    day_summaries: daySummaries,
+    created_at: Date.now(),
+  })
+}
+
+// ─── Mutacije ────────────────────────────────────────────────────────────────
+
+export async function generateNewPlan() {
+  const [allMeals, history] = await Promise.all([fetchMeals(), fetchRecentHistory(2)])
+
+  const existing = await fetchCurrentPlan()
+  if (existing) {
+    await archiveCurrentPlan(existing, allMeals)
+    await supabase.from('weekly_plans').update({ is_current_week: false }).eq('id', existing.id)
+  }
+
+  const plan = generateWeeklyPlan({ meals: allMeals, history, pairsToRegenerate: [0, 1, 2] })
+  await supabase.from('weekly_plans').insert(fromPlan(plan))
+  return plan
+}
+
+export async function regeneratePair(plan: WeeklyPlan, pairIndex: number) {
+  const [allMeals, history] = await Promise.all([fetchMeals(), fetchRecentHistory(2)])
 
   const updated = generateWeeklyPlan({
-    meals,
+    meals: allMeals,
     history,
-    slotsToRegenerate: [slotIndex],
+    pairsToRegenerate: [pairIndex],
     existingPlan: plan,
   })
 
-  await db.weeklyPlans.update(plan.id, { slots: updated.slots, generatedAt: Date.now() })
+  await supabase
+    .from('weekly_plans')
+    .update({ days: updated.days, generated_at: Date.now() })
+    .eq('id', plan.id)
 }
 
-export async function updateSlot(planId: string, slots: [DaySlot, DaySlot, DaySlot]) {
-  await db.weeklyPlans.update(planId, { slots })
+export async function clearDay(plan: WeeklyPlan, dayIndex: DayIndex) {
+  const days: DayEntry[] = plan.days.map((d) =>
+    d.dayIndex === dayIndex
+      ? { ...d, mealId: null, isCatering: false, cateringNote: '' }
+      : d
+  )
+  await supabase.from('weekly_plans').update({ days }).eq('id', plan.id)
 }
 
-export async function setSlotCatering(
+export async function setDayCatering(
   plan: WeeklyPlan,
-  slotIndex: SlotIndex,
+  dayIndex: DayIndex,
   isCatering: boolean,
   cateringNote = ''
 ) {
-  const slots = plan.slots.map((s) =>
-    s.slotIndex === slotIndex
-      ? { ...s, isCatering, cateringNote, mealId: isCatering ? null : s.mealId }
-      : s
-  ) as [DaySlot, DaySlot, DaySlot]
-  await db.weeklyPlans.update(plan.id, { slots })
+  const days: DayEntry[] = plan.days.map((d) =>
+    d.dayIndex === dayIndex
+      ? { ...d, isCatering, cateringNote, mealId: isCatering ? null : d.mealId }
+      : d
+  )
+  await supabase.from('weekly_plans').update({ days }).eq('id', plan.id)
 }
 
-export async function setSlotMeal(plan: WeeklyPlan, slotIndex: SlotIndex, mealId: string) {
-  const slots = plan.slots.map((s) =>
-    s.slotIndex === slotIndex
-      ? { ...s, mealId, isCatering: false, cateringNote: '' }
-      : s
-  ) as [DaySlot, DaySlot, DaySlot]
-  await db.weeklyPlans.update(plan.id, { slots })
+export async function setDayMeal(plan: WeeklyPlan, dayIndex: DayIndex, mealId: string) {
+  const days: DayEntry[] = plan.days.map((d) =>
+    d.dayIndex === dayIndex
+      ? { ...d, mealId, isCatering: false, cateringNote: '' }
+      : d
+  )
+  await supabase.from('weekly_plans').update({ days }).eq('id', plan.id)
 }
 
 export async function ensureCurrentWeekPlan() {
-  const existing = await getCurrentPlan()
+  const existing = await fetchCurrentPlan()
   if (existing) return
 
   const currentWeekStart = getWeekStart()
 
-  // Archive any old current-week plan from a previous week
-  const oldPlan = await db.weeklyPlans
-    .filter((p) => p.isCurrentWeek && p.weekStart < currentWeekStart)
-    .first()
+  // Arhiviraj stari plan ako postoji
+  const { data: oldPlans } = await supabase
+    .from('weekly_plans')
+    .select('*')
+    .eq('is_current_week', true)
+    .lt('week_start', currentWeekStart)
+    .limit(1)
 
-  if (oldPlan) {
-    await archiveCurrentPlan(oldPlan)
-    await db.weeklyPlans.update(oldPlan.id, { isCurrentWeek: false })
+  if (oldPlans && oldPlans.length > 0) {
+    const oldPlan = toPlan(oldPlans[0] as Record<string, unknown>)
+    const allMeals = await fetchMeals()
+    await archiveCurrentPlan(oldPlan, allMeals)
+    await supabase.from('weekly_plans').update({ is_current_week: false }).eq('id', oldPlan.id)
   }
+
+  const emptyDays: DayEntry[] = [0, 1, 2, 3, 4, 5].map((i) => ({
+    dayIndex: i as DayIndex,
+    mealId: null,
+    isCatering: false,
+    cateringNote: '',
+  }))
 
   const emptyPlan: WeeklyPlan = {
     id: newId(),
     weekStart: currentWeekStart,
-    slots: [
-      { slotIndex: 0, mealId: null, isCatering: false, cateringNote: '' },
-      { slotIndex: 1, mealId: null, isCatering: false, cateringNote: '' },
-      { slotIndex: 2, mealId: null, isCatering: false, cateringNote: '' },
-    ],
+    days: emptyDays,
     generatedAt: Date.now(),
     isCurrentWeek: true,
     notes: '',
   }
-  await db.weeklyPlans.add(emptyPlan)
+
+  await supabase.from('weekly_plans').insert(fromPlan(emptyPlan))
 }

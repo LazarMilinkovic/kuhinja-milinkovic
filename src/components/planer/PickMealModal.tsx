@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Search } from 'lucide-react'
-import type { Meal, SlotIndex } from '@/types'
+import type { Meal, DayIndex } from '@/types'
 import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
 
@@ -8,11 +8,11 @@ interface Props {
   open: boolean
   onClose: () => void
   meals: Meal[]
-  slotIndex: SlotIndex | null
-  onSelect: (slotIndex: SlotIndex, mealId: string) => void
+  dayIndex: DayIndex | null
+  onSelect: (dayIndex: DayIndex, mealId: string) => void
 }
 
-export function PickMealModal({ open, onClose, meals, slotIndex, onSelect }: Props) {
+export function PickMealModal({ open, onClose, meals, dayIndex, onSelect }: Props) {
   const [search, setSearch] = useState('')
 
   const filtered = meals.filter((m) =>
@@ -36,7 +36,7 @@ export function PickMealModal({ open, onClose, meals, slotIndex, onSelect }: Pro
           <button
             key={meal.id}
             onClick={() => {
-              if (slotIndex !== null) onSelect(slotIndex, meal.id)
+              if (dayIndex !== null) onSelect(dayIndex, meal.id)
               onClose()
             }}
             className="flex items-start gap-3 p-3 rounded-xl hover:bg-bg text-left transition-colors"

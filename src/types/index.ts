@@ -62,22 +62,38 @@ export interface Meal {
   updatedAt: number
 }
 
-export type SlotIndex = 0 | 1 | 2
+// 0=Pon, 1=Uto, 2=Sre, 3=Čet, 4=Pet, 5=Sub
+export type DayIndex = 0 | 1 | 2 | 3 | 4 | 5
 
-export const SLOT_LABELS: Record<SlotIndex, string> = {
+export const DAY_NAMES: Record<DayIndex, string> = {
+  0: 'Ponedeljak',
+  1: 'Utorak',
+  2: 'Sreda',
+  3: 'Četvrtak',
+  4: 'Petak',
+  5: 'Subota',
+}
+
+export const DAY_NAMES_SHORT: Record<DayIndex, string> = {
+  0: 'Pon',
+  1: 'Uto',
+  2: 'Sre',
+  3: 'Čet',
+  4: 'Pet',
+  5: 'Sub',
+}
+
+// Parovi: [Pon,Uto], [Sre,Čet], [Pet,Sub]
+export const DAY_PAIRS = [[0, 1], [2, 3], [4, 5]] as const
+
+export const PAIR_LABELS = {
   0: 'Ponedeljak — Utorak',
   1: 'Sreda — Četvrtak',
   2: 'Petak — Subota',
-}
+} as const
 
-export const SLOT_SHORT_LABELS: Record<SlotIndex, string> = {
-  0: 'Pon–Uto',
-  1: 'Sre–Čet',
-  2: 'Pet–Sub',
-}
-
-export interface DaySlot {
-  slotIndex: SlotIndex
+export interface DayEntry {
+  dayIndex: DayIndex
   mealId: string | null
   isCatering: boolean
   cateringNote: string
@@ -86,14 +102,14 @@ export interface DaySlot {
 export interface WeeklyPlan {
   id: string
   weekStart: number
-  slots: [DaySlot, DaySlot, DaySlot]
+  days: DayEntry[]
   generatedAt: number
   isCurrentWeek: boolean
   notes: string
 }
 
-export interface HistorySlotSummary {
-  slotIndex: SlotIndex
+export interface HistoryDaySummary {
+  dayIndex: DayIndex
   mealId: string | null
   mealName: string | null
   isCatering: boolean
@@ -103,7 +119,7 @@ export interface HistorySlotSummary {
 export interface HistoryEntry {
   id: string
   weekStart: number
-  slotSummaries: HistorySlotSummary[]
+  daySummaries: HistoryDaySummary[]
   createdAt: number
 }
 
